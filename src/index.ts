@@ -213,7 +213,8 @@ type Order = {
         OPEN,
         FILLED,
         PARTIALLY_FILLED,
-        PARTIALLY_FILLED_CANCLED
+        PARTIALLY_FILLED_CANCLED,
+        CANCELLED
     }
 app.post("/order", (req, res) => {
   // body: { userId, side: "BUY"|"SELL", type: "LIMIT"|"MARKET", symbol, price?, qty }
@@ -349,11 +350,11 @@ app.post("/order", (req, res) => {
                     incommingOrder.filledQty += filled;
                     if(incommingOrder.qty > incommingOrder.filledQty){
                         incommingOrder.status = OrderStatus.PARTIALLY_FILLED;
+
                     }
                     if(incommingOrder.qty == incommingOrder.filledQty){
                         incommingOrder.status = OrderStatus.FILLED
                     }
-
 
                     order.filledQty += filled;
                     remainingQty -= filled;
@@ -379,47 +380,69 @@ app.post("/order", (req, res) => {
 
             // if order does not get fully filled qty is remaining add it to the bids side
             if(remainingQty > 0){
+                if(type == "LIMIT"){
+
+                    if(!stockBook.bids) return;
+                    //for this price if it does not exists in bids side first create the price object
+                    if(!stockBook.bids[price]){
+                        stockBook.bids[price] = {
+                            totalQty: 0,
+                            orders: []
+                        }
+                    }
+    
+                    //for this price if already bid exist add qty and push orders
+                    stockBook.bids[price].totalQty += remainingQty;
+    
+                    stockBook.bids[price].orders.push({
+                        userId,
+                        qty: remainingQty,
+                        filledQty: 0,
+                        orderId,
+                        createdAt: Date.now()
+                    })
+                }
+                else{
+                    //type == MARKET
+                    if(incommingOrder.filledQty == 0){
+                        incommingOrder.status = OrderStatus.CANCELLED 
+                    }
+                    else if(incommingOrder.filledQty == qty){
+                        incommingOrder.status = OrderStatus.FILLED
+                    }
+                    else{
+
+                        incommingOrder.status  = OrderStatus.PARTIALLY_FILLED_CANCLED
+                    }
+                }
+            }
+        }
+        else{
+            //push buy order in bid side in orderbook
+            // no bids match
+            if(type == "LIMIT"){
                 if(!stockBook.bids) return;
-                //for this price if it does not exists in bids side first create the price object
                 if(!stockBook.bids[price]){
                     stockBook.bids[price] = {
                         totalQty: 0,
                         orders: []
                     }
                 }
-
-                //for this price if already bid exist add qty and push orders
-                stockBook.bids[price].totalQty += remainingQty;
-
+    
+                stockBook.bids[price].totalQty += qty;
+    
                 stockBook.bids[price].orders.push({
                     userId,
-                    qty: remainingQty,
+                    qty,
                     filledQty: 0,
                     orderId,
                     createdAt: Date.now()
                 })
             }
-        }
-        else{
-            //push buy order in bid side in orderbook
-            // no bids match
-            if(!stockBook.bids) return;
-            if(!stockBook.bids[price]){
-                stockBook.bids[price] = {
-                    totalQty: 0,
-                    orders: []
-                }
+            else{
+                //type == market
+                incommingOrder.status = OrderStatus.CANCELLED
             }
-
-            stockBook.bids[price].totalQty += qty;
-
-            stockBook.bids[price].orders.push({
-                userId,
-                qty,
-                filledQty: 0,
-                orderId,
-                createdAt: Date.now()
-            })
         } 
     }
     else{
@@ -491,22 +514,39 @@ app.post("/order", (req, res) => {
             })
 
             if(remainingQty > 0){
-                if(!stockBook.asks) return;
-                if(!stockBook.asks[price]){
-                    stockBook.asks[price] = {
-                        totalQty: 0,
-                        orders: []
+                if(type == "LIMIT"){
+
+                    if(!stockBook.asks) return;
+                    if(!stockBook.asks[price]){
+                        stockBook.asks[price] = {
+                            totalQty: 0,
+                            orders: []
+                        }
+                    }
+    
+                    stockBook.asks[price].totalQty += remainingQty;
+                    stockBook.asks[price].orders.push({
+                        userId,
+                        qty: remainingQty,
+                        filledQty: 0,
+                        orderId,
+                        createdAt: Date.now()
+                    })
+                }
+                // type == market order
+                else{
+                    if(incommingOrder.filledQty == 0){
+                        incommingOrder.status = OrderStatus.CANCELLED 
+                    }
+                    else if(incommingOrder.filledQty == qty){
+                        incommingOrder.status = OrderStatus.FILLED
+                    }
+                    else{
+
+                        incommingOrder.status  = OrderStatus.PARTIALLY_FILLED_CANCLED
                     }
                 }
 
-                stockBook.asks[price].totalQty += remainingQty;
-                stockBook.asks[price].orders.push({
-                    userId,
-                    qty: remainingQty,
-                    filledQty: 0,
-                    orderId,
-                    createdAt: Date.now()
-                })
             }
 
             if(bid.totalQty == 0){
@@ -514,22 +554,30 @@ app.post("/order", (req, res) => {
             }
         }
         else{
-            if(!stockBook.asks) return;
-                if(!stockBook.asks[price]){
-                    stockBook.asks[price] = {
-                        totalQty: 0,
-                        orders: []
-                    }
-                }
+            if(type == "LIMIT"){
 
-                stockBook.asks[price].totalQty += qty;
-                stockBook.asks[price].orders.push({
-                    userId,
-                    qty,
-                    filledQty: 0,
-                    orderId,
-                    createdAt: Date.now()
-                })
+                if(!stockBook.asks) return;
+                    if(!stockBook.asks[price]){
+                        stockBook.asks[price] = {
+                            totalQty: 0,
+                            orders: []
+                        }
+                    }
+    
+                    stockBook.asks[price].totalQty += qty;
+                    stockBook.asks[price].orders.push({
+                        userId,
+                        qty,
+                        filledQty: 0,
+                        orderId,
+                        createdAt: Date.now()
+                    })
+            }
+            else{
+                //type == market
+                incommingOrder.status = OrderStatus.CANCELLED
+            
+            }
         }
     }
 
