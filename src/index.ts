@@ -290,7 +290,7 @@ app.post("/order", (req, res) => {
 
 
     if(side == "BUY"){
-
+        // not added multi price matching logic will do it in version 2
         const asks = stockBook.asks
         if(!asks) return;
 
@@ -581,10 +581,10 @@ app.post("/order", (req, res) => {
         }
     }
 
-    // 4. write fills to FILLS, update filledQty + status on ORDERS
+    // done 4. write fills to FILLS, update filledQty + status on ORDERS
     
-    // 5. if leftover qty and LIMIT, rest on book; if MARKET, cancel remainder
-    // 6. settle balances on each fill (move locked -> other asset's available)
+    // done 5. if leftover qty and LIMIT, rest on book; if MARKET, cancel remainder
+    //  6. settle balances on each fill (move locked -> other asset's available)
 });
 
 app.delete("/order/:orderId", (req, res) => {
