@@ -1,9 +1,9 @@
 import express from "express"
 import { type Response } from "express";
 import bcrypt from "bcrypt"
-import jwt from "jsonwebtoken"
-import { JWT_SECRET } from "./config";
-import { TypePredicateKind } from "typescript";
+import jwt, { type JwtPayload } from "jsonwebtoken"
+import { JWT_SECRET } from "../config";
+import { TypePredicateKind, type EnumType } from "typescript";
 const app = express();
 app.use(express.json());
 
@@ -21,9 +21,21 @@ const STOCKS = [
   { id: 2, title: "HDFC BANK", symbol: "HDFC" },
   { id: 3, title: "TATA Steel", symbol: "TATA" },
 ];
-const ORDERS = [];
+const ORDERS = [
 
-const FILLS = [];
+];
+
+type fillsType = {
+    id: number,
+    buyerId: number,
+    sellerId: number,
+    buyerOrderId: number,
+    sellerOrderId: number,
+    price: number,
+    qty: number,
+    createdAt: number
+}
+const FILLS: fillsType[] = [];
 
 type balances = {
     [userId: number]: {
@@ -184,7 +196,25 @@ function response(res: Response, msg: string){
 function getId(){
     return Math.floor(Math.random() * 1000);
 }
+type Order = {
+  id: number,
+  userId: number,
+  side: string,
+  symbol: string,
+  price: number,
+  qty: number,
+  filledQty: number,
+  status: OrderStatus,
+  createdAt: number,
+}
 // --- Orders ---
+
+    enum OrderStatus {
+        OPEN,
+        FILLED,
+        PARTIALLY_FILLED,
+        PARTIALLY_FILLED_CANCLED
+    }
 app.post("/order", (req, res) => {
   // body: { userId, side: "BUY"|"SELL", type: "LIMIT"|"MARKET", symbol, price?, qty }
   const { userId, side, type, symbol, price, qty } = req.body;
@@ -200,8 +230,7 @@ app.post("/order", (req, res) => {
   if(!stockExists){
     return
   }
-
-
+  
   // 2. check + lock balance (INR for BUY, stock for SELL)
   if(!(userId in BALANCES)){
       return response(res, "user does not found");
@@ -240,7 +269,19 @@ app.post("/order", (req, res) => {
         stockBalance.locked += qty;
     }
 
+    const incommingOrder: Order = {
+    id: orderId,
+    userId: userId,
+    side: side,
+    symbol: symbol,
+    price: price,
+    qty: qty,
+    filledQty: 0,
+    status: OrderStatus.OPEN,
+    createdAt: Date.now()
+  }
 
+    ORDERS.push(incommingOrder)
 
     // 3. run matching engine against opposite side of ORDERBOOK
     const stockBook = ORDERBOOK[symbol];
@@ -290,20 +331,44 @@ app.post("/order", (req, res) => {
         
         for(let order of ask.orders){
             const remainingInOrder = order.qty - order.filledQty;
+            if(!remainingInOrder) continue;
             const filled = Math.min(remainingInOrder, remainingQty);
-            
-            order.filledQty += filled;
-            
-            remainingQty -= filled;
-            
-            ask.totalQty -= filled;
-            
+                if(filled){
+
+                    FILLS.push({
+                        id: getId(),
+                        buyerId: userId,
+                        sellerId: order.userId,
+                        buyerOrderId: orderId,
+                        sellerOrderId: order.orderId,
+                        qty: filled,
+                        price: min,
+                        createdAt: Date.now()
+                    })
+
+                    incommingOrder.filledQty += filled;
+                    if(incommingOrder.qty > incommingOrder.filledQty){
+                        incommingOrder.status = OrderStatus.PARTIALLY_FILLED;
+                    }
+                    if(incommingOrder.qty == incommingOrder.filledQty){
+                        incommingOrder.status = OrderStatus.FILLED
+                    }
+
+
+                    order.filledQty += filled;
+                    remainingQty -= filled;
+                    ask.totalQty -= filled;
+                }
+
             if(remainingQty == 0){
                 break;
-                }
             }
 
+        }
+
             //keeps condition which is true if filledqty < qty keep else remove
+            //remove completed sell orders
+
             ask.orders = ask.orders.filter( order => {
                 return order.filledQty < order.qty;
             })
@@ -334,11 +399,10 @@ app.post("/order", (req, res) => {
                     createdAt: Date.now()
                 })
             }
-
         }
         else{
             //push buy order in bid side in orderbook
-            // no match bids
+            // no bids match
             if(!stockBook.bids) return;
             if(!stockBook.bids[price]){
                 stockBook.bids[price] = {
@@ -374,8 +438,9 @@ app.post("/order", (req, res) => {
             }
         }
 
-        //whenever we are selling we see highest bidprice,
-        //every one want to buy at higher price so that's why bidprice >= sellprice
+       // For a SELL order, match against the highest bid first.
+        // A trade can happen if the buyer's bid price is
+        // greater than or equal to the seller's limit price.
         if(maxbid >= price){
             const bid = bids[maxbid];
             if(!bid) return;
@@ -388,16 +453,37 @@ app.post("/order", (req, res) => {
                 const remainingInOrder = order.qty - order.filledQty;
                 const filled = Math.min(remainingInOrder, remainingQty);
 
-                order.filledQty += filled;
+                if(filled){
 
-                remainingQty -= filled;
+                    FILLS.push({
+                        id: getId(),
+                        sellerId: userId,
+                        buyerId: order.userId,
+                        sellerOrderId: orderId,
+                        buyerOrderId: order.orderId,
+                        qty: filled,
+                        price: maxbid,
+                        createdAt: Date.now()
+                    })
 
-                bid.totalQty -= filled;
+                    incommingOrder.filledQty += filled;
+                    if(incommingOrder.filledQty < incommingOrder.qty){
+                        incommingOrder.status = OrderStatus.PARTIALLY_FILLED;
+                    }
+                    if(incommingOrder.qty == incommingOrder.filledQty){
+                        incommingOrder.status = OrderStatus.FILLED;
+                    }
 
-
-                if(remainingQty == 0){
-                    break;
+                    order.filledQty += filled;
+                    remainingQty -= filled;
+                    bid.totalQty -= filled;
+    
+    
+                    if(remainingQty == 0){
+                        break;
+                    }
                 }
+                
             }
 
             bid.orders = bid.orders.filter(order => {
@@ -445,9 +531,6 @@ app.post("/order", (req, res) => {
                     createdAt: Date.now()
                 })
         }
-
-
-        
     }
 
     // 4. write fills to FILLS, update filledQty + status on ORDERS
@@ -485,6 +568,19 @@ app.get("/stocks", (req, res) => {
 // --- User data ---
 app.get("/balance", (req, res) => {
   // return BALANCES[userId] for the authed user
+  const headers = req.headers.authorization;
+  const token = headers?.split(" ")[1];
+    if (!token) {
+        return res.status(401).json({ message: "missing token" });
+    }
+
+    const decoded = jwt.verify(token, JWT_SECRET) as JwtPayload | string;
+    if (typeof decoded === "string" || typeof decoded.userId !== "number") {
+        return res.status(401).json({ message: "invalid token" });
+    }
+
+    req.userId = decoded.userId;
+    return res.json(BALANCES[req.userId] ?? {});
 });
 
 app.listen(3000, () => console.log("CEX running on :3000"));
