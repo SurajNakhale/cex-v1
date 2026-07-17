@@ -329,36 +329,52 @@ app.post("/order", (req, res) => {
         */
         
         let remainingQty = qty;
-        
+
         for(let order of ask.orders){
             const remainingInOrder = order.qty - order.filledQty;
             if(!remainingInOrder) continue;
             const filled = Math.min(remainingInOrder, remainingQty);
-                if(filled){
+            if(filled){
+                
+                FILLS.push({
+                    id: getId(),
+                    buyerId: userId,
+                    sellerId: order.userId,
+                    buyerOrderId: orderId,
+                    sellerOrderId: order.orderId,
+                    qty: filled,
+                    price: min,
+                    createdAt: Date.now()
+                })
+                
 
-                    FILLS.push({
-                        id: getId(),
-                        buyerId: userId,
-                        sellerId: order.userId,
-                        buyerOrderId: orderId,
-                        sellerOrderId: order.orderId,
-                        qty: filled,
-                        price: min,
-                        createdAt: Date.now()
-                    })
+                incommingOrder.filledQty += filled;
+                if(incommingOrder.qty > incommingOrder.filledQty){
+                    incommingOrder.status = OrderStatus.PARTIALLY_FILLED;
+                    
+                }
 
-                    incommingOrder.filledQty += filled;
-                    if(incommingOrder.qty > incommingOrder.filledQty){
-                        incommingOrder.status = OrderStatus.PARTIALLY_FILLED;
+                if(incommingOrder.qty == incommingOrder.filledQty){
+                    incommingOrder.status = OrderStatus.FILLED
+                }
 
-                    }
-                    if(incommingOrder.qty == incommingOrder.filledQty){
-                        incommingOrder.status = OrderStatus.FILLED
-                    }
 
-                    order.filledQty += filled;
-                    remainingQty -= filled;
-                    ask.totalQty -= filled;
+                
+                order.filledQty += filled;
+                remainingQty -= filled;
+                ask.totalQty -= filled;
+
+                //  6. settle balances on each fill (move locked -> other asset's available)
+                
+                const buyerBalance = BALANCES[userId];
+                const sellerBalance = BALANCES[order.userId];
+
+                buyerBalance!.INR!.locked -= filled*min;
+                buyerBalance![symbol]!.available += filled
+                
+                sellerBalance!.INR!.available += filled*min;
+                sellerBalance![symbol]!.locked -= filled;
+                    
                 }
 
             if(remainingQty == 0){
@@ -501,7 +517,17 @@ app.post("/order", (req, res) => {
                     remainingQty -= filled;
                     bid.totalQty -= filled;
     
-    
+                    //settelment id side = sell;
+                    const sellerBalance = BALANCES[userId];
+                    const buyerBalance = BALANCES[order.userId];
+
+                    sellerBalance!.INR!.available += filled*maxbid;
+                    sellerBalance![symbol]!.locked -= filled
+
+                    buyerBalance!.INR!.locked -= filled*maxbid;
+                    buyerBalance![symbol]!.available += filled
+
+
                     if(remainingQty == 0){
                         break;
                     }
