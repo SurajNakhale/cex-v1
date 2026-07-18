@@ -654,7 +654,7 @@ app.delete("/order/:orderId", authMiddleware, (req, res) => {
         if(bidSide[price]!.orders.length == 0){
             delete bidSide[price];
         }
-        
+
         //unlock remaining reversed balance
         //we calculate because balances[userId] may include money locked for multiple orders.
         const lockedAmmount = (order.qty - order.filledQty) * order.price; 
@@ -695,7 +695,13 @@ app.delete("/order/:orderId", authMiddleware, (req, res) => {
 
 app.get("/orders", (req, res) => {
   // query: ?status=OPEN  (or all)
+  const statusParam = req.query.status;
+
+  //@ts-ignore
+  const orders = ORDERS.filter(order => order.status === statusParam);
+
   // return current user's orders
+  res.json(orders);
 });
 
 // --- Market data ---
