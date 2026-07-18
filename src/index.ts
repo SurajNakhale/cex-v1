@@ -1,12 +1,19 @@
-import express from "express"
+import express, { type NextFunction, type Request } from "express"
 import { type Response } from "express";
 import bcrypt from "bcrypt"
 import jwt, { type JwtPayload } from "jsonwebtoken"
 import { JWT_SECRET } from "../config";
-import { TypePredicateKind, type EnumType } from "typescript";
+import { symbolName, TypePredicateKind, type EnumType } from "typescript";
 const app = express();
 app.use(express.json());
 
+declare global {
+    namespace Express {
+        interface Request {
+            userId?: number;
+        }
+    }
+}
 
 type user = {
     id: number
@@ -21,7 +28,28 @@ const STOCKS = [
   { id: 2, title: "HDFC BANK", symbol: "HDFC" },
   { id: 3, title: "TATA Steel", symbol: "TATA" },
 ];
-const ORDERS = [
+
+type OrderType = {
+  id: number,
+  userId: number,
+  side: string,
+  symbol: string,
+  price: number,
+  qty: number,
+  filledQty: number,
+  status: OrderStatus,
+  createdAt: number,
+}
+// --- Orders ---
+
+    enum OrderStatus {
+        OPEN,
+        FILLED,
+        PARTIALLY_FILLED,
+        PARTIALLY_FILLED_CANCLED,
+        CANCELLED
+    }
+const ORDERS: OrderType[]  = [
 
 ];
 
@@ -196,26 +224,7 @@ function response(res: Response, msg: string){
 function getId(){
     return Math.floor(Math.random() * 1000);
 }
-type Order = {
-  id: number,
-  userId: number,
-  side: string,
-  symbol: string,
-  price: number,
-  qty: number,
-  filledQty: number,
-  status: OrderStatus,
-  createdAt: number,
-}
-// --- Orders ---
 
-    enum OrderStatus {
-        OPEN,
-        FILLED,
-        PARTIALLY_FILLED,
-        PARTIALLY_FILLED_CANCLED,
-        CANCELLED
-    }
 app.post("/order", (req, res) => {
   // body: { userId, side: "BUY"|"SELL", type: "LIMIT"|"MARKET", symbol, price?, qty }
   const { userId, side, type, symbol, price, qty } = req.body;
@@ -270,7 +279,7 @@ app.post("/order", (req, res) => {
         stockBalance.locked += qty;
     }
 
-    const incommingOrder: Order = {
+    const incommingOrder: OrderType = {
     id: orderId,
     userId: userId,
     side: side,
@@ -612,12 +621,76 @@ app.post("/order", (req, res) => {
     // done 5. if leftover qty and LIMIT, rest on book; if MARKET, cancel remainder
     //  6. settle balances on each fill (move locked -> other asset's available)
 });
+const authMiddleware = (req:Request, res:Response, next:NextFunction) => {
+    const headers = req.headers.authorization;
+    const token = headers?.split(" ")[1];
 
-app.delete("/order/:orderId", (req, res) => {
+    if(!token) return;
+
+    const decoded = jwt.verify(token, JWT_SECRET) as {userId: string};
+    req.userId = Number(decoded.userId);
+
+    next();
+}
+app.delete("/order/:orderId", authMiddleware, (req, res) => {
   // 1. find order, check ownership
-  // 2. remove from ORDERBOOK price level
-  // 3. unlock remaining reserved balance
-  // 4. mark status = CANCELLED
+    const userId = req.userId;
+    const orderId = Number(req.params.orderId);
+    const order = ORDERS.find(x => x.id == orderId);
+    if(!order) response(res, "order does not exists");
+    
+    if(order?.userId != userId){
+        return response(res, "invalid user")
+    }
+
+
+    if(order?.status == OrderStatus.PARTIALLY_FILLED && order.side == "BUY"){
+        // 2. remove from ORDERBOOK price level
+        const bidSide = ORDERBOOK[order.symbol]!.bids;
+        if(!bidSide) return;
+        const price = order.price;
+        bidSide[price]!.orders = bidSide[price]!.orders.filter(x => x.orderId != order.id); 
+
+        if(bidSide[price]!.orders.length == 0){
+            delete bidSide[price];
+        }
+        
+        //unlock remaining reversed balance
+        //we calculate because balances[userId] may include money locked for multiple orders.
+        const lockedAmmount = (order.qty - order.filledQty) * order.price; 
+        const buyerId = BALANCES[order.userId]!.INR
+        
+        buyerId!.available += lockedAmmount;
+        buyerId!.locked -= lockedAmmount;
+        
+
+        //mark status = cancelled
+        order.status = OrderStatus.PARTIALLY_FILLED_CANCLED;
+    }
+    else if(order?.status == OrderStatus.PARTIALLY_FILLED && order.side == "SELL"){
+        const askSide = ORDERBOOK[order.symbol]!.asks;
+        if(!askSide) return;
+        const price = order.price;
+        askSide[price]!.orders = askSide[price]!.orders.filter(x => x.orderId != order.id); 
+
+        if(askSide[price]!.orders.length == 0){
+            delete askSide[price];
+        }
+        // 3. unlock remaining reserved balance
+        const lockedAmmount = (order.qty - order.filledQty); 
+        const sellerId = BALANCES[order.userId]![order.symbol];
+        
+        sellerId!.available += lockedAmmount;
+        sellerId!.locked -= lockedAmmount;
+        
+
+
+        // 4. mark status = CANCELLED
+        order.status = OrderStatus.PARTIALLY_FILLED_CANCLED;
+
+    }
+
+    return response(res, "order cancelled successfully")
 });
 
 app.get("/orders", (req, res) => {
