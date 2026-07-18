@@ -710,6 +710,38 @@ app.get("/orders", (req, res) => {
 // --- Market data ---
 app.get("/orderbook/:symbol", (req, res) => {
   // return aggregated depth — totalQty per price level for bids and asks
+  const currSymbol = req.params.symbol;
+
+    if(!ORDERBOOK[currSymbol]) return response(res, "symbol does not exists");
+
+  const bids = ORDERBOOK[currSymbol]!.bids
+  const asks = ORDERBOOK[currSymbol]!.asks
+
+    const bidsPricesAndQty = Object.entries(bids!)
+    .map(([price, level])=> ({
+        price: Number(price),
+        totalQty: level.totalQty
+    }))
+    .sort((a, b) => b.price - a.price) //place highest first => buyer willing to pay more have higher priority;
+
+    const asksPricesAndQty = Object.entries(asks!).map(([price, level]) => ({
+        price: Number(price),
+        totalQty: level.totalQty
+    }))
+    .sort((a, b) => a.price - b.price); //lowest first => seller asking for less have priority
+
+;
+
+    const newOrderBook = {
+        "bids": {
+            bidsPricesAndQty
+        },
+        "asks": {
+            asksPricesAndQty
+        }
+    }
+
+    res.json(newOrderBook);
   // (don't expose individual userIds to other users)
 });
 
