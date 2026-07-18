@@ -59,6 +59,7 @@ type fillsType = {
     sellerId: number,
     buyerOrderId: number,
     sellerOrderId: number,
+    symbol: string
     price: number,
     qty: number,
     createdAt: number
@@ -350,6 +351,7 @@ app.post("/order", (req, res) => {
                     buyerId: userId,
                     sellerId: order.userId,
                     buyerOrderId: orderId,
+                    symbol: symbol,
                     sellerOrderId: order.orderId,
                     qty: filled,
                     price: min,
@@ -509,6 +511,7 @@ app.post("/order", (req, res) => {
                         buyerId: order.userId,
                         sellerOrderId: orderId,
                         buyerOrderId: order.orderId,
+                        symbol: symbol,
                         qty: filled,
                         price: maxbid,
                         createdAt: Date.now()
@@ -712,6 +715,20 @@ app.get("/orderbook/:symbol", (req, res) => {
 
 app.get("/fills/:symbol", (req, res) => {
   // recent trades for this stock — the "tape"
+  const paramSymbol = req.params.symbol;
+
+  const fillsTrade = FILLS.filter(x => x.symbol == paramSymbol).sort((a, b) => b.createdAt - a.createdAt);
+    const trade = fillsTrade.map(x => (
+        {
+            id: x.id,
+            buyerId: x.buyerId,
+            sellerId: x.sellerId,
+            price: x.price,
+            qty: x.qty,
+            createdAt: x.createdAt,
+        }
+    ))
+  res.json(trade)
 });
 
 app.get("/stocks", (req, res) => {
